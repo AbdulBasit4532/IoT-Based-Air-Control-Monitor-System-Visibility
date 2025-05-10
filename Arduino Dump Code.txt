@@ -1,0 +1,95 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <DHT.h>
+#include <ArduinoOTA.h>
+#include <Adafruit_BMP280.h>
+
+// --- WiFi Credentials ---
+const char* ssid = "iPhone";
+const char* password = "12345678";
+
+// --- Server URL ---
+const char* serverName = "https://techyaim.com/AIR_Qualitysys.php";
+
+// --- DHT11 Config ---
+#define DHT_PIN 4
+#define DHT_TYPE DHT11
+DHT dht(DHT_PIN, DHT_TYPE);
+
+// --- BMP280 Config ---
+Adafruit_BMP280 bmp; // I2C
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nConnected to WiFi");
+
+  dht.begin();
+
+  // --- Initialize BMP280 ---
+  Serial.println("Initializing BMP280...");
+  if (!bmp.begin(0x76)) {
+    Serial.println("Could not find a valid BMP280 sensor, check wiring!");
+    while (1) delay(10);
+  }
+
+  // --- BMP280 Settings ---
+  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                  Adafruit_BMP280::SAMPLING_X2,
+                  Adafruit_BMP280::SAMPLING_X16,
+                  Adafruit_BMP280::FILTER_X16,
+                  Adafruit_BMP280::STANDBY_MS_500);
+
+  // --- OTA Setup ---
+  ArduinoOTA.setHostname("ESP32-AQM");
+  ArduinoOTA.begin();
+  Serial.println("OTA Ready");
+}
+
+void loop() {
+  ArduinoOTA.handle();  // Always run this in loop()
+
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+
+    // Read sensors
+    float temp_dht = dht.readTemperature();
+    float hum_dht = dht.readHumidity();
+    float temp_bmp = bmp.readTemperature();
+    float pressure = bmp.readPressure() / 100.0; // Convert to hPa
+    float altitude = bmp.readAltitude(1013.25);  // Adjust sea level pressure
+
+    if (!isnan(temp_dht) && !isnan(hum_dht)) {
+      String url = serverName;
+      url += "?temperature=" + String(temp_dht);
+      url += "&humidity=" + String(hum_dht);
+      url += "&pressure=" + String(pressure);
+      url += "&altitude=" + String(altitude);
+
+      http.begin(url);
+      int httpResponseCode = http.GET();
+
+      if (httpResponseCode > 0) {
+        Serial.print("Server Response: ");
+        Serial.println(http.getString());
+      } else {
+        Serial.print("Error sending request: ");
+        Serial.println(httpResponseCode);
+      }
+
+      http.end();
+    } else {
+      Serial.println("Failed to read from DHT sensor!");
+    }
+  } else {
+    Serial.println("WiFi not connected!");
+  }
+
+  delay(5000); // Send every 5 seconds
+}
